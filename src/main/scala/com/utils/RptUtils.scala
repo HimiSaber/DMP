@@ -74,12 +74,12 @@ object RptUtils {
       b = 0
     }
     if(ise==1 && isb==1 && isWin==1 ){
-      c = 1
+      c = wp
     }else{
       c = 0
     }
     if(ise==1 && isb==1 && isWin==1 ){
-      d = 1
+      d = adp
     }else{
       d = 0
     }
