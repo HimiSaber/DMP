@@ -5,6 +5,8 @@ import java.util.Properties
 
 import com.typesafe.config.{Config, ConfigFactory}
 import com.utils.{JdbcUtils, RptUtils}
+import org.apache.spark.deploy.SparkSubmit
+import org.apache.spark.memory.TaskMemoryManager
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, SaveMode, SparkSession}
 
@@ -80,6 +82,7 @@ object CannalRpt {
         ps.setDouble(10,tup._10)
         ps.execute()
       })
+      SparkSubmit
       //回收jdbc连接
       conn.close()
     })
@@ -89,6 +92,8 @@ object CannalRpt {
 //      .write.mode(SaveMode.Append)
 //        .jdbc(getProperties()._2, "CannalRpt", getProperties()._1)
     //res.take(20).foreach(println)
+
+    ssc.close()
 
 
 
