@@ -1,9 +1,10 @@
 package com.Tag
 
-import com.utils.Tag
+import com.utils.{JedisUtils, Tag}
 import org.apache.commons.lang3.StringUtils
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.Row
+import redis.clients.jedis.Jedis
 
 import scala.collection.mutable.ListBuffer
 
@@ -16,11 +17,13 @@ object TagsAdd extends Tag{
   override def makeTags(args: Any*): List[(String, Int)] = {
     var list = ListBuffer[(String,Int)]()
 
-
     //解析参数
     val row: Row = args(0).asInstanceOf[Row]
     //解析广播变量
-    val appInfo: Map[String, String] = args(1).asInstanceOf[Map[String, String]]
+    //val appInfo: Map[String, String] = args(1).asInstanceOf[Map[String, String]]
+
+    //解析Jedis连接
+    val jedis: Jedis = args(1).asInstanceOf[Jedis]
 
     //获取广告类型、广告类型名称
     val adType: Int = row.getAs[Int]("adspacetype")
@@ -38,7 +41,8 @@ object TagsAdd extends Tag{
     //获取App名称
     val appname: String = row.getAs[String]("appname")
     if(appname.equals(" ")) {
-      list.append(("APP" + appInfo.getOrElse(row.getAs[String]("appid"), "未知"), 1))
+      //list.append(("APP" + appInfo.getOrElse(row.getAs[String]("appid"), "未知"), 1))
+      list.append(("APP"+jedis.get(row.getAs[String]("appid")),1))
     }else{
       list.append(("APP"+appname,1))
     }
