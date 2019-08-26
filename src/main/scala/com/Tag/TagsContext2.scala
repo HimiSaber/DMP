@@ -1,35 +1,30 @@
 package com.Tag
 
 import com.typesafe.config.{Config, ConfigFactory}
-import com.utils.{JedisUtils, TagUtils}
+import com.utils.{HbaseUtils, JedisUtils, TagUtils}
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.hbase.{HColumnDescriptor, HTableDescriptor, TableName}
+import org.apache.hadoop.hbase.{HBaseConfiguration, HColumnDescriptor, HTableDescriptor, TableName}
 import org.apache.hadoop.hbase.client.{Admin, Connection, ConnectionFactory, Put}
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable
 import org.apache.hadoop.hbase.mapred.TableOutputFormat
 import org.apache.hadoop.hbase.util.Bytes
 import org.apache.hadoop.mapred.JobConf
-import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, SparkSession}
-import org.apache.spark.{SparkConf, SparkContext}
 import redis.clients.jedis.Jedis
 
-object TagsContext {
+object TagsContext2 {
+
   def main(args: Array[String]): Unit = {
-    if(args.length != 2) {
+    if(args.length != 4) {
       println("目录不匹配，退出程序")
       sys.exit()
     }
 
 
-//    val Array(inputPath,outputPath,appinfoPath,unPath,date)=args
-
-    val Array(inputPath,date)=args
+    val Array(inputPath,stopPath,outputPath,date)=args
 
     //创建上下文
-//    val conf: SparkConf = new SparkConf().setAppName(this.getClass.getName).setMaster("local[*]")
-//    new SparkContext(conf)
     val ssc: SparkSession = SparkSession.builder()
       .appName(this.getClass.getName)
       .master("local[*]")
@@ -39,14 +34,20 @@ object TagsContext {
     val config: Config = ConfigFactory.load()
     //表名字
     val tbname: String = config.getString("hbase.TableName")
-
     //创建hadoop任务
     val hdConf: Configuration = ssc.sparkContext.hadoopConfiguration
     hdConf.set("hbase.master",config.getString("hbase.master"))
     hdConf.set("hbase.zookeeper.quorum",config.getString("hbase.host"))
-    hdConf.set("hbase.zookeeper.property.clientPort",config.getString("hbase.port"))
     //创建HbaseConnection
     val hbconn: Connection = ConnectionFactory.createConnection(hdConf)
+
+//    val conf: Configuration = HBaseConfiguration.create()
+//    conf.set("hbase.master",config.getString("hbase.master"))
+//    conf.set("hbase.zookeeper.quorum",config.getString("hbase.host"))
+//    val hbconn: Connection = ConnectionFactory.createConnection(conf)
+
+   // val hbconn: Connection = HbaseUtils.getConn()
+
 
     val admin: Admin = hbconn.getAdmin
     if(!admin.tableExists(TableName.valueOf(tbname))){
@@ -58,38 +59,17 @@ object TagsContext {
       admin.close()
       hbconn.close()
     }
-    val jobconf = new JobConf()
+    val jobconf = new JobConf(hdConf)
 
     jobconf.setOutputFormat(classOf[TableOutputFormat])
     jobconf.set(TableOutputFormat.OUTPUT_TABLE,tbname)
 
 
 
-//    val appInfoTup: RDD[(String, String)] = ssc.sparkContext.textFile(appinfoPath)
-//      .map(_.split("\\t"))
-//      .filter(_.length>=5)
-//      .map(arr => (arr(4), arr(1)))
-//    val map: Map[String, String] = appInfoTup.collect().toMap
-//    //广播app字典Map
-//    val boradcast: Broadcast[Map[String, String]] = ssc.sparkContext.broadcast(map)
-
-
-
-
-    //读取数据
-//    val df: DataFrame = ssc.read.parquet(inputPath)
-//    val tags: RDD[(String, List[(String, Int)])] = df.filter(TagUtils.OneUserId)
-//      .rdd.map(row => {
-//      //接下来所有的标签都在内部实现
-//      //取出用户id(key)
-//      val userId: String = TagUtils.getOneUserId(row)
-//      //通过Row数据打标签
-//      val adList: List[(String, Int)] = TagsAdd.makeTags(row, boradcast.value)
-//      //val adList: List[(String, Int)] = TagsAdd.makeTags(row)
-//      (userId, adList)
-//    })
-
-    //redis版本
+    //停用词库
+    val stopword = ssc.sparkContext.textFile(stopPath).map((_,0)).collectAsMap()
+    val bcstopword = ssc.sparkContext.broadcast(stopword)
+    //打标签
     val df: DataFrame = ssc.read.parquet(inputPath)
     val tags: RDD[(String, List[(String, Int)])] = df.filter(TagUtils.OneUserId)
       .rdd.mapPartitions(part=>{
@@ -100,35 +80,43 @@ object TagsContext {
           //取出用户id(key)
           val userId: String = TagUtils.getOneUserId(row)
           //通过Row数据打标签
-          //val adList: List[(String, Int)] = TagsAdd.makeTags(row, boradcast.value)
-          val adList: List[(String, Int)] = TagsAd.makeTags(row,jedis)
+          val adList: List[(String, Int)] = TagsAd.makeTags(row)
+          val appList: List[(String, Int)] = TagsApp.makeTags(row,jedis)
+          val canList: List[(String, Int)] = TagsCannal.makeTags(row)
+          val devList: List[(String, Int)] = TagsDevice.makeTags(row)
+          val keyList: List[(String, Int)] = TagsKey.makeTags(row,bcstopword)
+          val areaList: List[(String, Int)] = TagsArea.makeTags(row)
+          val busList: List[(String, Int)] = TagBusiness.makeTags(row,jedis)
 
-          (userId, adList)
+          (userId, adList++appList++canList++devList++keyList++areaList++busList)
         })
       }finally {
         jedis.close()
       }
     })
+   // tags.saveAsTextFile(outputPath)
 
-tags.reduceByKey((li1, li2) => {
+
+    //聚合
+    val ret: RDD[(ImmutableBytesWritable, Put)] = tags.reduceByKey((li1, li2) => {
       //List(("LN插屏",1),("LN全屏"，1),("ZC沈阳",1),())
       (li1 ::: li2)
         //List(("LN插屏",List(1,1,1,1)),())
         .groupBy(_._1)
         .mapValues(_.foldLeft[Int](0)(_ + _._2))
         .toList
-    }).map{
-      case(userid,userTag)=>{
+    }).map {
+      case (userid, userTag) => {
         val put = new Put(Bytes.toBytes(userid))
         //处理以下标签
-        val tags: String = userTag.map(tup=>tup._1+","+tup._2).mkString(",")
-        put.addImmutable(Bytes.toBytes("tags"),Bytes.toBytes(date),Bytes.toBytes(tags))
-        (new ImmutableBytesWritable(),put)
+        val tags: String = userTag.map(tup => tup._1 + "," + tup._2).mkString(",")
+        put.addImmutable(Bytes.toBytes("tag"), Bytes.toBytes(date), Bytes.toBytes(tags))
+        (new ImmutableBytesWritable(), put)
       }
 
-    }.saveAsHadoopDataset(jobconf)
+    }
+    ret.saveAsHadoopDataset(jobconf)
 
 
   }
-
 }

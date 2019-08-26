@@ -4,9 +4,10 @@ import com.utils.JedisUtils
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SparkSession
 import redis.clients.jedis.Jedis
-
+import org.apache.http.ssl
 object Dict2Redis {
   def main(args: Array[String]): Unit = {
+
     val ssc: SparkSession = SparkSession.builder()
       .appName(this.getClass.getName)
       .master("local[*]")
