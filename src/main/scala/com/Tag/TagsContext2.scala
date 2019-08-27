@@ -1,5 +1,7 @@
 package com.Tag
 
+import java.util.concurrent.atomic.LongAccumulator
+
 import com.typesafe.config.{Config, ConfigFactory}
 import com.utils.{HbaseUtils, JedisUtils, TagUtils}
 import org.apache.hadoop.conf.Configuration
@@ -12,7 +14,7 @@ import org.apache.hadoop.mapred.JobConf
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import redis.clients.jedis.Jedis
-
+import org.apache.hadoop.hbase.NamespaceDescriptor
 object TagsContext2 {
 
   def main(args: Array[String]): Unit = {
@@ -71,14 +73,14 @@ object TagsContext2 {
     val bcstopword = ssc.sparkContext.broadcast(stopword)
     //打标签
     val df: DataFrame = ssc.read.parquet(inputPath)
-    val tags: RDD[(String, List[(String, Int)])] = df.filter(TagUtils.OneUserId)
+    val tags: RDD[(List[String], List[(String, Int)])] = df.filter(TagUtils.OneUserId)
       .rdd.mapPartitions(part=>{
       val jedis: Jedis = JedisUtils.getJedis()
       try {
         part.map(row => {
           //接下来所有的标签都在内部实现
           //取出用户id(key)
-          val userId: String = TagUtils.getOneUserId(row)
+           val userId: List[String] = TagUtils.getAllUserId(row)
           //通过Row数据打标签
           val adList: List[(String, Int)] = TagsAd.makeTags(row)
           val appList: List[(String, Int)] = TagsApp.makeTags(row,jedis)
@@ -94,29 +96,44 @@ object TagsContext2 {
         jedis.close()
       }
     })
-   // tags.saveAsTextFile(outputPath)
+    //tags.saveAsTextFile(outputPath)
+//    val acc: LongAccumulator = LongAccumulator
+//    acc.
+//    tags.map(tup=>{
+//      (tup._1,tup._2)
+//    })
 
 
-    //聚合
-    val ret: RDD[(ImmutableBytesWritable, Put)] = tags.reduceByKey((li1, li2) => {
-      //List(("LN插屏",1),("LN全屏"，1),("ZC沈阳",1),())
-      (li1 ::: li2)
-        //List(("LN插屏",List(1,1,1,1)),())
-        .groupBy(_._1)
-        .mapValues(_.foldLeft[Int](0)(_ + _._2))
-        .toList
-    }).map {
-      case (userid, userTag) => {
-        val put = new Put(Bytes.toBytes(userid))
-        //处理以下标签
-        val tags: String = userTag.map(tup => tup._1 + "," + tup._2).mkString(",")
-        put.addImmutable(Bytes.toBytes("tag"), Bytes.toBytes(date), Bytes.toBytes(tags))
-        (new ImmutableBytesWritable(), put)
-      }
+//    //聚合
+//    val ret: RDD[(ImmutableBytesWritable, Put)] = tags.reduceByKey((li1, li2) => {
+//      //List(("LN插屏",1),("LN全屏"，1),("ZC沈阳",1),())
+//      (li1 ::: li2)
+//        //List(("LN插屏",List(1,1,1,1)),())
+//        .groupBy(_._1)
+//        .mapValues(_.foldLeft[Int](0)(_ + _._2))
+//        .toList
+//    }).map {
+//      case (userid, userTag) => {
+//        val put = new Put(Bytes.toBytes(userid))
+//        //处理以下标签
+//        val tags: String = userTag.map(tup => tup._1 + "," + tup._2).mkString(",")
+//        put.addImmutable(Bytes.toBytes("tag"), Bytes.toBytes(date), Bytes.toBytes(tags))
+//        (new ImmutableBytesWritable(), put)
+//      }
+//
+//    }
 
-    }
-    ret.saveAsHadoopDataset(jobconf)
 
+    //ret.saveAsHadoopDataset(jobconf)
+//    def longAccumulator(name: String): LongAccumulator = {
+//      val acc = LongAccumulator
+//
+//      ssc.sparkContext.register(acc,"a")
+//      acc
+//    }
 
   }
+
+
+
 }
